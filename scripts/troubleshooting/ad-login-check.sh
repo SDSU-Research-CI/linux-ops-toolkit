@@ -31,6 +31,13 @@ policy=$(realm list 2>/dev/null | awk -F': ' '/login-policy:/ {print $2; exit}')
 info "Login policy: $policy"
 
 section "Does the machine know the user?"
+# AD limits the legacy login name (sAMAccountName) to 20 characters, so a long
+# account such as name-desktop-admin is stored cut off (name-desktop-a).
+if [[ ${#user} -gt 20 ]] && ! getent passwd "$user" >/dev/null; then
+  short="${user:0:20}"
+  warn "'$user' is longer than 20 characters. AD stores the login name cut off; trying '$short'"
+  user="$short"
+fi
 if ! getent passwd "$user" >/dev/null; then
   bad "getent cannot find '$user'. Check the spelling, VPN or campus network, and clock sync (timedatectl)."
   info "If the user was just created or changed in AD, wait for replication or clear the SSSD cache:"
@@ -38,6 +45,7 @@ if ! getent passwd "$user" >/dev/null; then
   exit 1
 fi
 ok "Found: $(getent passwd "$user" | cut -d: -f1,3,4,6)"
+info "Use this exact login name for ssh and for sshusers: $user"
 
 section "Login permission (realm permit)"
 mapfile -t pg < <(permitted_groups)
