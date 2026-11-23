@@ -72,7 +72,7 @@ if [[ -n "$group" ]]; then
   section "Group: $group"
   gres=$(ldap "(&(objectClass=group)(sAMAccountName=${group}))" distinguishedName member description)
   if [[ -z "$gres" ]]; then
-    bad "Group '$group' not found (check the exact name, AADSync > COS > Groups > Labs)"
+    bad "Group '$group' not found (check the exact group name in AD)"
   else
     ok "Group exists"
     echo "$gres" | awk -F': ' '/^distinguishedName:|^description:/ {print "       "$0}'
