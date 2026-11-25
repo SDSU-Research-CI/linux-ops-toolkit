@@ -4,8 +4,12 @@
 # Safe to run on any machine. Nothing is changed. Run it first when a ticket says
 # "the computer is slow", "I cannot log in", or "the server is down".
 #
-# Usage: ./linux-health-check.sh [--save]
+# Usage (from the repo folder):  bash health-check.sh [--save]
 #   --save   also write the report to ~/health-check-<hostname>-<date>.txt
+#            (handy to attach to the ServiceNow ticket)
+# Reading the result: [ OK ] fine, [WARN] look at it, [FAIL] needs fixing.
+# Sections that do not apply (for example Active Directory on a server that is
+# not joined to the domain) are skipped and never count as a failure.
 #
 # Values (domain, groups, gateway) are detected, nothing is hardcoded.
 
@@ -36,11 +40,12 @@ else
   ok "No reboot pending"
 fi
 
+diskwarn=0
 section "Disk"
 while read -r _fs size used avail pct mnt; do
   p="${pct%\%}"
   if [[ "$p" =~ ^[0-9]+$ ]] && (( p >= DISK_WARN )); then
-    warn "$mnt is ${pct} full ($used of $size used, $avail free)"
+    warn "$mnt is ${pct} full ($used of $size used, $avail free)"; diskwarn=1
   else
     ok "$mnt ${pct} used ($avail free)"
   fi
@@ -49,6 +54,12 @@ while read -r _fs _inodes _iused _ifree ipct mnt; do
   p="${ipct%\%}"
   [[ "$p" =~ ^[0-9]+$ ]] && (( p >= DISK_WARN )) && warn "$mnt inodes ${ipct} used"
 done < <(df -iP -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2)
+
+if (( diskwarn )); then
+  info "To find what is using the space:  sudo du -xh / --max-depth=2 | sort -h | tail -15"
+  info "Safe first steps:  sudo apt autoremove --purge   and   sudo apt clean"
+  info "Do not delete user data. Ask the server owner or John if unsure."
+fi
 
 section "Memory"
 read -r mtotal mused < <(free -m | awk '/^Mem:/ {print $2, $3}')
@@ -86,7 +97,7 @@ if have ufw; then info "Firewall: $(ufw status 2>/dev/null | head -n1)"; fi
 section "Time sync"
 if have timedatectl; then
   sync=$(timedatectl show -p NTPSynchronized --value 2>/dev/null)
-  if [[ "$sync" == "yes" ]]; then ok "Clock is synchronized"; else bad "Clock is NOT synchronized (Kerberos and AD logins fail with clock skew)"; fi
+  if [[ "$sync" == "yes" ]]; then ok "Clock is synchronized"; else bad "Clock is NOT synchronized (try: sudo timedatectl set-ntp true. Logins to AD fail when the clock is off)"; fi
 fi
 
 section "Active Directory"
@@ -119,5 +130,13 @@ fi
 
 section "Summary"
 printf 'Failures: %d   Warnings: %d\n' "$FAILURES" "$WARNINGS"
+if (( FAILURES > 0 )); then
+  info "Next: fix each [FAIL] above, starting with the first one. Ask John or Alison if you are stuck."
+elif (( WARNINGS > 0 )); then
+  info "Next: read each [WARN]. Many are harmless, but note them in the ticket."
+else
+  info "Everything looks fine. If the problem continues, note the exact error message in the ticket."
+fi
+info "Tip: run again with --save to keep a copy for the ServiceNow ticket."
 [[ $SAVE -eq 1 ]] && info "Saved to $OUT"
 exit $(( FAILURES > 0 ? 2 : (WARNINGS > 0 ? 1 : 0) ))
