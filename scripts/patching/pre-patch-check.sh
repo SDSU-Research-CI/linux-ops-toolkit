@@ -8,6 +8,11 @@
 # Exit code: 0 safe to patch, 1 patch with caution, 2 do not patch now.
 # At the end it prints a note you can paste into the ServiceNow ticket.
 # The person running the check is not counted as "someone connected".
+#
+# Order of work:  1) bash patch-check.sh   2) sudo apt upgrade   3) sudo reboot
+#                 4) bash after-patch-check.sh  (confirms it all worked)
+# This script refreshes the package list (apt update) but installs nothing.
+# It saves what it found so after-patch-check.sh can compare before and after.
 
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,7 +21,8 @@ source "$HERE/../lib-common.sh"
 
 BLOCKERS=0
 CAUTIONS=0
-block() { bad "$*"; BLOCKERS=$((BLOCKERS + 1)); }
+REASONS=()
+block() { bad "$*"; BLOCKERS=$((BLOCKERS + 1)); REASONS+=("$*"); }
 caution() { warn "$*"; CAUTIONS=$((CAUTIONS + 1)); }
 
 printf '%sPre-patch check%s: this only looks around. It does not install or change anything.\n' "$C_BLD" "$C_RST"
@@ -61,12 +67,19 @@ if have nvidia-smi; then
   if [[ -n "$gpu" ]]; then block "GPU jobs are running:"; echo "$gpu" | sed 's/^/       /'; else ok "No GPU jobs"; fi
 fi
 
+lowdisk=0
 section "Disk space needed for updates"
 for m in / /boot /var; do
   mountpoint -q "$m" 2>/dev/null || [[ "$m" == "/" ]] || continue
   avail=$(df -Pm "$m" | awk 'NR==2 {print $4}')
-  if (( avail < 1024 )); then block "$m has only ${avail} MB free"; else ok "$m has ${avail} MB free"; fi
+  if (( avail < 1024 )); then block "$m has only ${avail} MB free (updates need about 1 GB)"; lowdisk=1; else ok "$m has ${avail} MB free"; fi
 done
+if (( lowdisk )); then
+  info "To free space: run  bash scripts/troubleshooting/linux-health-check.sh  to see what is using it."
+  info "Safe first steps:  sudo apt autoremove --purge   and   sudo apt clean"
+  info "Find big folders:  sudo du -xh / --max-depth=2 | sort -h | tail -15"
+  info "Do not delete user data. Ask the server owner or John if unsure."
+fi
 
 section "Package state"
 # unattended-upgrade-shutdown is a helper that always runs on Ubuntu, so it is ignored.
@@ -84,8 +97,24 @@ else
 fi
 held=$(apt-mark showhold 2>/dev/null)
 [[ -n "$held" ]] && caution "Held packages: $(echo "$held" | tr '\n' ' ')"
-upg=$(apt list --upgradable 2>/dev/null | tail -n +2 | wc -l)
-info "Upgradable packages: $upg (run 'sudo apt update' first for fresh numbers)"
+if [[ -z "$busy" ]]; then
+  SUDO=""; [[ $EUID -ne 0 ]] && SUDO="sudo"
+  info "Refreshing the package list (apt update). This installs nothing."
+  if $SUDO apt-get update -qq >/dev/null 2>&1; then
+    ok "Package list is fresh"
+  else
+    caution "Could not refresh the package list (sudo or network problem). The numbers below may be old"
+  fi
+fi
+upg_list=$(apt list --upgradable 2>/dev/null | tail -n +2)
+upg=0
+[[ -n "$upg_list" ]] && upg=$(echo "$upg_list" | wc -l)
+info "Updates waiting to be installed: $upg"
+kernel_update="no"
+echo "$upg_list" | cut -d/ -f1 | grep -qE '^linux-(image|generic|modules|headers)' && kernel_update="yes"
+reboot_expected="no"
+echo "$upg_list" | cut -d/ -f1 | grep -qE '^(linux-image|libc6|systemd$|dbus$)' && reboot_expected="yes"
+[[ "$kernel_update" == "yes" ]] && info "A new kernel is included. A reboot will be required."
 if [[ -f /var/run/reboot-required ]]; then caution "A reboot is already pending from an earlier update"; else ok "No reboot pending"; fi
 last=$(grep -h '^Start-Date' /var/log/apt/history.log 2>/dev/null | tail -n1 | sed 's/Start-Date: //')
 info "Last apt activity: ${last:-unknown}"
@@ -108,20 +137,44 @@ else
   verdict="SAFE TO PATCH"; rc=0
 fi
 printf '%s%s%s\n' "$C_BLD" "$verdict" "$C_RST"
+state="/var/tmp/patch-check-$(hostname -s)"
+{
+  echo "PRE_DATE='$(date '+%Y-%m-%d %H:%M:%S')'"
+  echo "PRE_KERNEL='$(uname -r)'"
+  echo "PRE_BOOTID='$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)'"
+  echo "PRE_COUNT='$upg'"
+  echo "PRE_KERNEL_UPDATE='$kernel_update'"
+  echo "PRE_VERDICT='$verdict'"
+} > "$state.env" 2>/dev/null
+echo "$upg_list" | cut -d/ -f1 > "$state.pkgs" 2>/dev/null
+
 case $rc in
-  0) info "Next: create or open the ServiceNow ticket, paste the note below, then patch:"
-     info "  sudo apt update && sudo apt upgrade" ;;
-  1) info "Next: read each [WARN] above. If you understand them, you may patch,"
-     info "then mention them in the ticket. If unsure, ask John or Alison first."
-     info "To patch:  sudo apt update && sudo apt upgrade" ;;
-  2) info "Next: do NOT patch yet. Read each [FAIL] above."
-     info "If people are connected, ask the server owner for a restart window"
-     info "and write the approval in the ServiceNow ticket. Then run this check again." ;;
+  0|1)
+    (( rc == 1 )) && info "Read each [WARN] above first. If unsure, ask John or Alison."
+    info "IMPORTANT: patching needs a reboot afterwards (always after a kernel update)."
+    info "Make sure the server owner knows about the restart. Next steps:"
+    info "  1. sudo apt upgrade"
+    info "  2. sudo reboot"
+    info "  3. log in again, then run:  bash after-patch-check.sh" ;;
+  2)
+    info "Do NOT patch yet. Fix or get approval for each [FAIL] above."
+    info "Paste the request below into the ServiceNow ticket and ask the server owner"
+    info "for a restart window. When approved or fixed, run this check again." ;;
 esac
 
-section "Paste into the ServiceNow ticket"
-cat <<NOTE
-Pre-patch check $(date '+%Y-%m-%d %H:%M') on $(hostname -s): $verdict.
-Other connected users: $nsessions. Upgradable packages: $upg. Reboot pending: $([[ -f /var/run/reboot-required ]] && echo yes || echo no).
-NOTE
+if (( rc == 2 )); then
+  section "Paste into the ServiceNow ticket (request approval)"
+  echo "Pre-patch check $(date '+%Y-%m-%d %H:%M') on $(hostname -s): patching is ON HOLD."
+  echo "Reasons:"
+  for r in "${REASONS[@]}"; do echo "- $r"; done
+  [[ -n "$sessions" ]] && echo "Connected users: $(echo "$sessions" | awk '{print $1}' | sort -u | tr '\n' ' ')"
+  echo "Waiting to install: $upg updates (kernel update: $kernel_update). A reboot will be required."
+  echo "Requesting approval and a restart window from the server owner."
+else
+  section "Paste into the ServiceNow ticket (before patching)"
+  echo "Pre-patch check $(date '+%Y-%m-%d %H:%M') on $(hostname -s): $verdict."
+  echo "Checked: connected users (none other), running jobs, GPU jobs, disk space, held packages, services."
+  echo "Updates to install: $upg (kernel update: $kernel_update). Reboot pending from before: $([[ -f /var/run/reboot-required ]] && echo yes || echo no)."
+  echo "Plan: apt upgrade, then reboot, then run the after-patch check."
+fi
 exit $rc
