@@ -27,18 +27,25 @@ info "$(hostname -f 2>/dev/null || hostname)  |  $(. /etc/os-release && echo "$P
 info "Uptime: $(uptime -p)"
 
 section "Who is connected"
-# Ignore only the terminal this script is running in (you), not the account name,
-# so a second admin session or a researcher logged in still counts.
+# Admin accounts that never count as "someone connected" (extra stsadmin
+# sessions are usually a dropped connection or a forgotten logout).
+# Add more names separated by spaces if needed.
+ADMIN_USERS="stsadmin"
 mytty=$(ps -o tty= -p $$ 2>/dev/null | tr -d ' ')
-sessions=$(who 2>/dev/null | awk -v t="$mytty" '$2 != t')
+sessions=$(who 2>/dev/null | awk -v t="$mytty" -v a="$ADMIN_USERS" 'BEGIN{n=split(a,x," "); for(i=1;i<=n;i++) adm[x[i]]=1} $2 != t && !($1 in adm)')
+admin_other=$(who 2>/dev/null | awk -v t="$mytty" -v a="$ADMIN_USERS" 'BEGIN{n=split(a,x," "); for(i=1;i<=n;i++) adm[x[i]]=1} $2 != t && ($1 in adm)')
 nsessions=0
 [[ -n "$sessions" ]] && nsessions=$(echo "$sessions" | wc -l)
 if [[ -z "$sessions" ]]; then
-  ok "Nobody else is connected (your own session is not counted)"
+  ok "Nobody else is connected (admin sessions are not counted)"
 else
   block "Other people are connected:"
   echo "$sessions" | sed 's/^/       /'
   info "Columns: user, terminal, login time, where from."
+fi
+if [[ -n "$admin_other" ]]; then
+  info "Other admin sessions (ignored, may be old or forgotten):"
+  echo "$admin_other" | sed 's/^/       /'
 fi
 if have tmux && tmux ls >/dev/null 2>&1; then caution "tmux sessions exist for the current user"; fi
 if have screen && screen -ls 2>/dev/null | grep -q Socket; then caution "screen sessions exist for the current user"; fi
