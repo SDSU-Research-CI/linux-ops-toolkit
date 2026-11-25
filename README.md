@@ -10,7 +10,7 @@ Related repositories:
 
 | Script | When to use it |
 | --- | --- |
-| `scripts/troubleshooting/linux-health-check.sh` | First look at any machine: disk, memory, failed services, network, time sync, AD and SSH settings. `--save` keeps a copy of the report. |
+| `health-check.sh` (runs `scripts/troubleshooting/linux-health-check.sh`) | First look at any machine, joined to the domain or not: `bash health-check.sh`. disk, memory, failed services, network, time sync, AD and SSH settings. `--save` keeps a copy of the report. |
 | `scripts/troubleshooting/ad-login-check.sh [user]` | An AD user cannot log in. Reads `realm list`, checks the permitted groups, the user's groups, sshusers and sudo rights. Run with `sudo` for the full report. |
 | `patch-check.sh` (runs `scripts/patching/pre-patch-check.sh`) | Before patching: `bash patch-check.sh`. Runs `apt update`, checks for connected users, long jobs, GPU jobs, disk space, held packages and pending reboots, then gives a verdict and a note for the ticket. |
 | `after-patch-check.sh` (runs `scripts/patching/post-patch-check.sh`) | After `sudo apt upgrade` and `sudo reboot`: `bash after-patch-check.sh`. Confirms the reboot, kernel, installed package count and services, and gives a note for the ticket. |
@@ -47,6 +47,17 @@ bash after-patch-check.sh
 ```
 
 The after check confirms the reboot happened, shows the old and new kernel, counts the packages installed, checks that services came back, and prints a second note for the ticket. Patching needs a reboot, so tell the server owner first. If the before check says not to patch (someone is connected, a job is running, low disk space), it prints a note to request approval.
+
+## When something is wrong
+
+Start with the health check. It works on any Ubuntu machine, including ones that are not joined to the domain (the Active Directory section is simply skipped).
+
+```bash
+cd linux-ops-toolkit
+bash health-check.sh --save
+```
+
+Read each `[FAIL]` and `[WARN]`, starting at the top. `--save` keeps a copy in your home folder that you can attach to the ServiceNow ticket. For an AD user who cannot log in, continue with `scripts/troubleshooting/ad-login-check.sh USERNAME`.
 
 ## Exit codes
 
