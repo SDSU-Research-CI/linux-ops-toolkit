@@ -46,6 +46,7 @@ if [[ -z "$sessions" ]]; then
   ok "Nobody else is connected (admin sessions are not counted)"
 else
   block "Other people are connected:"
+  REASONS[-1]="Other people are connected: $(echo "$sessions" | awk '{print $1}' | sort -u | tr '\n' ' ' | sed 's/ $//')"
   echo "$sessions" | sed 's/^/       /'
   info "Columns: user, terminal, login time, where from."
 fi
@@ -168,7 +169,6 @@ if (( rc == 2 )); then
   echo "Pre-patch check $(date '+%Y-%m-%d %H:%M') on $(hostname -s): patching is ON HOLD."
   echo "Reasons:"
   for r in "${REASONS[@]}"; do echo "- $r"; done
-  [[ -n "$sessions" ]] && echo "Connected users: $(echo "$sessions" | awk '{print $1}' | sort -u | tr '\n' ' ')"
   echo "Waiting to install: $upg updates (kernel update: $kernel_update). A reboot will be required."
   echo "Requesting approval and a restart window from the server owner."
 else
