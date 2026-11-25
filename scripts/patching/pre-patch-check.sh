@@ -75,7 +75,7 @@ for m in / /boot /var; do
   if (( avail < 1024 )); then block "$m has only ${avail} MB free (updates need about 1 GB)"; lowdisk=1; else ok "$m has ${avail} MB free"; fi
 done
 if (( lowdisk )); then
-  info "To free space: run  bash scripts/troubleshooting/linux-health-check.sh  to see what is using it."
+  info "To free space: run  bash health-check.sh  for a full look at the disk."
   info "Safe first steps:  sudo apt autoremove --purge   and   sudo apt clean"
   info "Find big folders:  sudo du -xh / --max-depth=2 | sort -h | tail -15"
   info "Do not delete user data. Ask the server owner or John if unsure."
@@ -159,7 +159,8 @@ case $rc in
   2)
     info "Do NOT patch yet. Fix or get approval for each [FAIL] above."
     info "Paste the request below into the ServiceNow ticket and ask the server owner"
-    info "for a restart window. When approved or fixed, run this check again." ;;
+    info "for a restart window. When approved or fixed, run this check again."
+    info "For a full look at the machine:  bash health-check.sh" ;;
 esac
 
 if (( rc == 2 )); then
