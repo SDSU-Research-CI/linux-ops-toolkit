@@ -95,7 +95,8 @@ printf '%s%s%s\n' "$C_BLD" "$verdict" "$C_RST"
 case $rc in
   0) info "Next: paste the note below into the ServiceNow ticket and close the patching task." ;;
   1) info "Next: read each [WARN]. Fix or explain them in the ticket." ;;
-  2) info "Next: fix each [FAIL] first. Ask John or Alison if you are stuck. Do not close the ticket yet." ;;
+  2) info "Next: fix each [FAIL] first. Ask John or Alison if you are stuck. Do not close the ticket yet."
+     info "For a full look at the machine:  bash health-check.sh --save   (keeps a copy for the ticket)" ;;
 esac
 
 section "Paste into the ServiceNow ticket (after patching)"
